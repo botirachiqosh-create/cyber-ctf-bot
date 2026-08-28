@@ -472,6 +472,10 @@ CHALLENGES_50 = [
 def populate_database_and_vault():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
+    cursor.execute("UPDATE users SET score = 0, solved_count = 0, current_challenge_id = 1;")
+    cursor.execute("DELETE FROM submissions;")
+    cursor.execute("DELETE FROM hints_used;")
+    cursor.execute("DELETE FROM active_instances;")
     cursor.execute("DELETE FROM challenges;")
     
     for idx, chal in enumerate(CHALLENGES_50, 1):
