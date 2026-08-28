@@ -43,7 +43,16 @@ if GEMINI_API_KEY:
     except Exception as e:
         print(f"⚠️ Gemini client ogohlantirish: {e}")
 
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
+from aiogram.client.session.aiohttp import AiohttpSession
+
+proxy_url = os.environ.get("http_proxy") or os.environ.get("https_proxy")
+if proxy_url:
+    session = AiohttpSession(proxy=proxy_url)
+    bot = Bot(token=TELEGRAM_BOT_TOKEN, session=session)
+    print(f"🌐 Proxy faollashtirildi: {proxy_url}")
+else:
+    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+
 dp = Dispatcher()
 
 # Self-Contained Startup: Database init + Background Live CTF services
