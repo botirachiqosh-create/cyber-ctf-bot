@@ -242,7 +242,7 @@ async def generic_text_handler(message: types.Message):
         if gemini_client:
             await bot.send_chat_action(chat_id=message.chat.id, action="typing")
             resp = gemini_client.models.generate_content(
-                model="gemini-2.0-flash-lite",
+                model="gemini-3.5-flash-lite",
                 contents=f"Qisqa javob ber: {message.text}",
             )
             await message.answer(resp.text[:4000])
