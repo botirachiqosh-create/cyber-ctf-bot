@@ -45,11 +45,15 @@ if GEMINI_API_KEY:
 
 from aiogram.client.session.aiohttp import AiohttpSession
 
+is_pythonanywhere = "pythonanywhere" in str(BASE_DIR).lower() or "pmicadzoqwt" in str(BASE_DIR).lower()
 proxy_url = os.environ.get("http_proxy") or os.environ.get("https_proxy")
+if is_pythonanywhere and not proxy_url:
+    proxy_url = "http://proxy.server:3128"
+
 if proxy_url:
     session = AiohttpSession(proxy=proxy_url)
     bot = Bot(token=TELEGRAM_BOT_TOKEN, session=session)
-    print(f"🌐 Proxy faollashtirildi: {proxy_url}")
+    print(f"🌐 PythonAnywhere Proxy ulandi: {proxy_url}")
 else:
     bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
