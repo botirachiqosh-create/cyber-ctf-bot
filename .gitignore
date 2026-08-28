@@ -1,0 +1,9 @@
+venv/
+__pycache__/
+*.pyc
+.env
+temp/
+*.session
+*.db
+ctf_instances/
+ssh_host_key*
