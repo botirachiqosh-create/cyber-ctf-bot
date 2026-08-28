@@ -11,9 +11,10 @@ import socket
 import paramiko
 from pathlib import Path
 
-DB_PATH = Path("/home/fara/.gemini/antigravity/scratch/telegram_video_bot/ctf_platform.db")
-INSTANCES_DIR = Path("/home/fara/.gemini/antigravity/scratch/ctf_instances")
-HOST_KEY_PATH = Path("/home/fara/.gemini/antigravity/scratch/ctf_lab/ssh_host_key")
+BASE_DIR = Path("/app" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot")
+DB_PATH = BASE_DIR / "ctf_platform.db"
+INSTANCES_DIR = Path("/app/ctf_instances" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/ctf_instances")
+HOST_KEY_PATH = BASE_DIR / "ssh_host_key"
 
 INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
 

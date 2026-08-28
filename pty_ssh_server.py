@@ -7,9 +7,10 @@ import select
 import paramiko
 from pathlib import Path
 
-LAB_BASE = Path("/home/fara/.gemini/antigravity/scratch/ctf_lab")
+BASE_DIR = Path("/app" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot")
+LAB_BASE = Path("/app/ctf_lab" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/ctf_lab")
 USERS_DIR = LAB_BASE / "users"
-HOST_KEY_PATH = LAB_BASE / "ssh_host_key"
+HOST_KEY_PATH = BASE_DIR / "ssh_host_key"
 
 USERS_DIR.mkdir(parents=True, exist_ok=True)
 

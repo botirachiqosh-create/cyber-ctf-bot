@@ -1,8 +1,10 @@
 import sqlite3
 from pathlib import Path
 from datetime import datetime
+import os
 
-DB_PATH = Path("/home/fara/.gemini/antigravity/scratch/telegram_video_bot/ctf_platform.db")
+BASE_DIR = Path("/app" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot")
+DB_PATH = BASE_DIR / "ctf_platform.db"
 
 def get_db():
     conn = sqlite3.connect(DB_PATH)
@@ -13,7 +15,6 @@ def init_db():
     with get_db() as conn:
         cursor = conn.cursor()
         
-        # 1. Foydalanuvchilar jadvali
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -26,13 +27,12 @@ def init_db():
         );
         """)
 
-        # 2. CTF Topshiriqlari jadvali
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS challenges (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            id INTEGER PRIMARY KEY,
             module TEXT,
             title TEXT,
-            difficulty TEXT, -- Easy, Medium, Hard
+            difficulty TEXT,
             points INTEGER,
             description TEXT,
             hint TEXT,
@@ -41,7 +41,6 @@ def init_db():
         );
         """)
 
-        # 3. Topshirilgan flaglar tarixi
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS submissions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -56,7 +55,6 @@ def init_db():
         );
         """)
 
-        # 4. Foydalanuvchining olingan hintlari
         cursor.execute("""
         CREATE TABLE IF NOT EXISTS hints_used (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,23 +64,9 @@ def init_db():
             UNIQUE(user_id, challenge_id)
         );
         """)
-
-        # 5. SSH Sessiyalari
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ssh_sessions (
-            user_id INTEGER PRIMARY KEY,
-            ssh_host TEXT,
-            ssh_port INTEGER,
-            ssh_user TEXT,
-            ssh_pass TEXT,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-        """)
         
         conn.commit()
-    print("✅ Database (SQLite) muvaffaqiyatli ishga tushirildi!")
 
-# Helper functions
 def register_user(user_id: int, username: str, first_name: str):
     with get_db() as conn:
         conn.execute("""
@@ -109,36 +93,29 @@ def get_leaderboard(limit: int = 10):
 
 def verify_flag(user_id: int, submitted_flag: str):
     with get_db() as conn:
-        # Check if flag exists
         chal = conn.execute("SELECT * FROM challenges WHERE flag = ?", (submitted_flag.strip(),)).fetchone()
         if not chal:
             return {"status": "wrong", "msg": "❌ Noto'g'ri flag! Qaytadan urinib ko'ring."}
         
-        # Check if already solved
         already = conn.execute("""
         SELECT * FROM submissions 
         WHERE user_id = ? AND challenge_id = ? AND is_correct = 1
         """, (user_id, chal["id"])).fetchone()
         
         if already:
-            return {"status": "already", "msg": f"⚠️ Siz bu topshiriqni ({chal['title']}) allaqachon topshirgansiz!"}
+            return {"status": "already", "msg": f"⚠️ Siz bu topshiriqni (#{chal['id']} - {chal['title']}) allaqachon topshirgansiz!"}
         
-        # Check if hint used
         hint_used = conn.execute("""
         SELECT * FROM hints_used WHERE user_id = ? AND challenge_id = ?
         """, (user_id, chal["id"])).fetchone()
         
-        points = chal["points"]
-        if hint_used:
-            points = max(1, points - 1) # Hint olingan bo'lsa 1 ball kamayadi
+        points = max(1, chal["points"] - 1) if hint_used else chal["points"]
             
-        # Record submission
         conn.execute("""
         INSERT INTO submissions (user_id, challenge_id, flag, is_correct, points_awarded)
         VALUES (?, ?, ?, 1, ?)
         """, (user_id, chal["id"], submitted_flag.strip(), points))
         
-        # Update user score
         conn.execute("""
         UPDATE users 
         SET score = score + ?, solved_count = solved_count + 1
@@ -151,7 +128,7 @@ def verify_flag(user_id: int, submitted_flag: str):
             "title": chal["title"],
             "points": points,
             "module": chal["module"],
-            "msg": f"🎉 **TO'G'RI!**\n\n📌 **Topshiriq:** {chal['title']} ({chal['module']})\n🏆 **Qo'shilgan ball:** +{points} ball!"
+            "msg": f"🎉 <b>TO'G'RI!</b>\n\n📌 <b>Topshiriq:</b> #{chal['id']} — {chal['title']} ({chal['module']})\n🏆 <b>Qo'shilgan ball:</b> +{points} ball!"
         }
 
 if __name__ == "__main__":
