@@ -13,7 +13,6 @@ from aiogram.types import (
 )
 from google import genai
 from google.genai import types as genai_types
-from database import save_user
 from ctf_database import (
     register_user, get_user_stats, get_leaderboard, 
     verify_flag, get_db
@@ -22,20 +21,19 @@ from instance_orchestrator import spawn_challenge_instance, destroy_user_instanc
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-load_dotenv("/home/fara/.gemini/antigravity/scratch/telegram_video_bot/.env")
+load_dotenv("/app/.env" if os.path.exists("/app/.env") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot/.env")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
 if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN is not set in .env")
+    raise ValueError("TELEGRAM_BOT_TOKEN is not set in environment")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else genai.Client()
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
-TEMP_DIR = Path("/home/fara/.gemini/antigravity/scratch/telegram_video_bot/temp")
-TEMP_DIR.mkdir(parents=True, exist_ok=True)
+TEMP_DIR = Path("/tmp")
 
 # Main Keyboard
 main_keyboard = ReplyKeyboardMarkup(
@@ -58,11 +56,11 @@ def get_total_challenges_count():
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
     user = message.from_user
-    register_user(user.id, user.username or "Anonim", user.first_name)
-    save_user(user.id, user.first_name, user.last_name or "", user.username or "")
+    u_name = f"@{user.username}" if user.username else f"user_{user.id}"
+    register_user(user.id, u_name, user.first_name)
     
     text = (
-        f"Salom, <b>{user.first_name}</b>! ⚡\n\n"
+        f"Salom, <b>{u_name}</b>! ⚡\n\n"
         f"<b>50 ta Hard CTF & 1-ga-1 SSH Lab Platformasi</b>\n\n"
         f"• Har bir topshiriq uchun alohida unikal IP beriladi.\n"
         f"• Ishlatilgach, avtomatik o'chadi.\n\n"
@@ -216,10 +214,13 @@ async def leaderboard_handler(message: types.Message):
         await message.answer("🏆 Hozircha hech kim flag topshirmagan.")
         return
         
-    text = "🏆 <b>TOP-10 CYBER CTF TALABALARI:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-    for i, row in enumerate(leaders, 1):
-        name = row["first_name"] or row["username"]
-        text += f"{i}. <b>{name}</b> — ⭐ {row['score']} ball ({row['solved_count']} ta flag)\n"
+    text = "🏆 <b>TOP-10 CTF REYTINGI:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    
+    for i, row in enumerate(leaders):
+        medal = medals[i] if i < len(medals) else f"{i+1}."
+        u_handle = row["username"] if row["username"].startswith("@") else f"@{row['username']}"
+        text += f"{medal} <b>{u_handle}</b> — ⭐ {row['score']} ball ({row['solved_count']} ta flag)\n"
         
     await message.answer(text, parse_mode="HTML")
 
@@ -232,10 +233,11 @@ async def stats_handler(message: types.Message):
         await message.answer("Siz hali topshiriq bajarmadingiz.")
         return
         
+    u_handle = stats["username"] if stats["username"].startswith("@") else f"@{stats['username']}"
     text = (
         f"👤 <b>PROFIL:</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>Ism:</b> {stats['first_name']}\n"
+        f"👤 <b>User:</b> {u_handle}\n"
         f"⭐ <b>Ball:</b> {stats['score']} ball\n"
         f"🚩 <b>Yechilgan:</b> {stats['solved_count']} / 50 ta\n"
         f"🎯 <b>Joriy topshiriq:</b> #{stats['current_challenge_id']}\n"
@@ -278,7 +280,7 @@ async def generic_text_handler(message: types.Message):
     await message.answer(resp.text)
 
 async def main():
-    print("🤖 Oddiy va Tezkor 1-ga-1 CTF Bot ishga tushdi...")
+    print("🤖 1-ga-1 CTF Bot 24/7 ishga tushdi...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
