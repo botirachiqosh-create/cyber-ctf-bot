@@ -2,6 +2,7 @@ import asyncio
 import os
 import time
 import logging
+import threading
 from pathlib import Path
 from dotenv import load_dotenv
 from aiohttp import web
@@ -19,6 +20,8 @@ from ctf_database import (
     verify_flag, get_db
 )
 from instance_orchestrator import spawn_challenge_instance, destroy_user_instances
+from populate_50_hard_challenges import populate_database_and_vault
+from spawn_live_ctf_services import run_unlinked_file_daemon, run_hex_stream_server, run_fifo_daemon
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -32,7 +35,20 @@ gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
-TEMP_DIR = Path("/tmp")
+# Self-Contained Startup: Database init + Background Live CTF services
+try:
+    populate_database_and_vault()
+    print("✅ 50 ta Hard CTF bazasi muvaffaqiyatli yuklandi!")
+except Exception as e:
+    print(f"⚠️ DB yuklashda ogohlantirish: {e}")
+
+try:
+    threading.Thread(target=run_unlinked_file_daemon, daemon=True).start()
+    threading.Thread(target=run_hex_stream_server, daemon=True).start()
+    run_fifo_daemon()
+    print("✅ Jonli CTF target xizmatlari (sockets, named pipes) ishga tushdi!")
+except Exception as e:
+    print(f"⚠️ CTF target xizmatlari ogohlantirish: {e}")
 
 # Main Keyboard
 main_keyboard = ReplyKeyboardMarkup(
@@ -284,25 +300,23 @@ async def generic_text_handler(message: types.Message):
     except Exception as e:
         await message.answer("Savolingiz qabul qilindi. Topshiriqni boshlash uchun /start buyrug'ini bosing!")
 
-# Optional Web Health Check
+# Universal Web Health Check for Railway/Render
 async def handle_health(request):
     return web.Response(text="Cyber CTF Bot is running 24/7!", status=200)
 
 async def start_web_server():
     try:
-        port_env = os.environ.get("PORT")
-        if port_env:
-            port = int(port_env)
-            app = web.Application()
-            app.router.add_get("/", handle_health)
-            app.router.add_get("/health", handle_health)
-            runner = web.AppRunner(app)
-            await runner.setup()
-            site = web.TCPSite(runner, "0.0.0.0", port)
-            await site.start()
-            print(f"🌐 Web Health Check server {port} portida ishga tushdi...")
+        port = int(os.environ.get("PORT", "8080"))
+        app = web.Application()
+        app.router.add_get("/", handle_health)
+        app.router.add_get("/health", handle_health)
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, "0.0.0.0", port)
+        await site.start()
+        print(f"🌐 Universal Web Health Check server {port} portida ishga tushdi...")
     except Exception as e:
-        print(f"⚠️ Web server ogohlantirish (e'tiborsiz qoldirilsin): {e}")
+        print(f"⚠️ Web health check ogohlantirish: {e}")
 
 async def main():
     print("🤖 1-ga-1 CTF Bot 24/7 ishga tushdi...")
@@ -311,8 +325,8 @@ async def main():
         try:
             await dp.start_polling(bot, handle_signals=False)
         except Exception as e:
-            logging.error(f"⚠️ Polling uzildi: {e}. 3 soniyada qayta ulanmoqda...")
-            await asyncio.sleep(3)
+            logging.error(f"⚠️ Polling uzildi: {e}. 2 soniyada qayta ulanmoqda...")
+            await asyncio.sleep(2)
 
 if __name__ == "__main__":
     asyncio.run(main())

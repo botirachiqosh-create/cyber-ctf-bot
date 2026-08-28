@@ -14,16 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xxd \
     curl \
     wget \
-    git \
-    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . /app/
-RUN chmod +x /app/entrypoint.sh /app/ctf_cli.py
 
 EXPOSE 8080 2222
 
-CMD ["/bin/bash", "/app/entrypoint.sh"]
+CMD ["python", "bot.py"]
