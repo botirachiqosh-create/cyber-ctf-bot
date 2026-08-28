@@ -3,7 +3,7 @@ from pathlib import Path
 from datetime import datetime
 import os
 
-BASE_DIR = Path("/app" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot")
+BASE_DIR = Path(__file__).parent.resolve()
 DB_PATH = BASE_DIR / "ctf_platform.db"
 
 def get_db():

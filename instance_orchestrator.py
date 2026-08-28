@@ -11,19 +11,21 @@ import socket
 import paramiko
 from pathlib import Path
 
-BASE_DIR = Path("/app" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot")
+BASE_DIR = Path(__file__).parent.resolve()
 DB_PATH = BASE_DIR / "ctf_platform.db"
-INSTANCES_DIR = Path("/app/ctf_instances" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/ctf_instances")
+INSTANCES_DIR = BASE_DIR / "ctf_instances"
 HOST_KEY_PATH = BASE_DIR / "ssh_host_key"
 
 INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
 
-if not HOST_KEY_PATH.exists():
-    HOST_KEY_PATH.parent.mkdir(parents=True, exist_ok=True)
+try:
+    if not HOST_KEY_PATH.exists():
+        k = paramiko.RSAKey.generate(2048)
+        k.write_private_key_file(str(HOST_KEY_PATH))
+    else:
+        k = paramiko.RSAKey(filename=str(HOST_KEY_PATH))
+except Exception as e:
     k = paramiko.RSAKey.generate(2048)
-    k.write_private_key_file(str(HOST_KEY_PATH))
-else:
-    k = paramiko.RSAKey(filename=str(HOST_KEY_PATH))
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)

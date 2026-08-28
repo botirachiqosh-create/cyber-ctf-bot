@@ -7,18 +7,21 @@ import select
 import paramiko
 from pathlib import Path
 
-BASE_DIR = Path("/app" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot")
-LAB_BASE = Path("/app/ctf_lab" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/ctf_lab")
+BASE_DIR = Path(__file__).parent.resolve()
+LAB_BASE = BASE_DIR / "ctf_lab"
 USERS_DIR = LAB_BASE / "users"
 HOST_KEY_PATH = BASE_DIR / "ssh_host_key"
 
 USERS_DIR.mkdir(parents=True, exist_ok=True)
 
-if not HOST_KEY_PATH.exists():
+try:
+    if not HOST_KEY_PATH.exists():
+        key = paramiko.RSAKey.generate(2048)
+        key.write_private_key_file(str(HOST_KEY_PATH))
+    else:
+        key = paramiko.RSAKey(filename=str(HOST_KEY_PATH))
+except Exception as e:
     key = paramiko.RSAKey.generate(2048)
-    key.write_private_key_file(str(HOST_KEY_PATH))
-else:
-    key = paramiko.RSAKey(filename=str(HOST_KEY_PATH))
 
 def setup_user_sandbox(user_id: int):
     user_home = USERS_DIR / f"user_{user_id}"

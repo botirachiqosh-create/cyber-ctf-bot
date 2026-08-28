@@ -22,7 +22,8 @@ from instance_orchestrator import spawn_challenge_instance, destroy_user_instanc
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
-load_dotenv("/app/.env" if os.path.exists("/app/.env") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot/.env")
+BASE_DIR = Path(__file__).parent.resolve()
+load_dotenv(BASE_DIR / ".env")
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()

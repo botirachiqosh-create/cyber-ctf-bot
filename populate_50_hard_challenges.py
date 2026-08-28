@@ -2,9 +2,9 @@ import sqlite3
 import os
 from pathlib import Path
 
-BASE_DIR = Path("/app" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot")
+BASE_DIR = Path(__file__).parent.resolve()
 DB_PATH = BASE_DIR / "ctf_platform.db"
-VAULT_DIR = Path("/app/ctf_vault" if os.path.exists("/app") else "/home/fara/.gemini/antigravity/scratch/ctf_vault")
+VAULT_DIR = BASE_DIR / "ctf_vault"
 VAULT_DIR.mkdir(parents=True, exist_ok=True)
 
 CHALLENGES_50 = [
