@@ -27,10 +27,7 @@ load_dotenv("/app/.env" if os.path.exists("/app/.env") else "/home/fara/.gemini/
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN must be set in Environment Variables")
-
-gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else genai.Client()
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 
@@ -273,32 +270,48 @@ async def generic_text_handler(message: types.Message):
     if message.text.startswith("/"):
         return
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    prompt = f"Talabaning savoli: {message.text}\nQisqa, aniq va lo'nda javob bering."
-    resp = gemini_client.models.generate_content(
-        model="gemini-3.5-flash-lite",
-        contents=prompt
-    )
-    await message.answer(resp.text)
+    try:
+        if gemini_client:
+            prompt = f"Talabaning savoli: {message.text}\nQisqa, aniq va lo'nda javob bering."
+            resp = gemini_client.models.generate_content(
+                model="gemini-3.5-flash-lite",
+                contents=prompt
+            )
+            await message.answer(resp.text)
+        else:
+            await message.answer("🤖 AI Mentor faol.")
+    except Exception as e:
+        await message.answer("Savolingiz qabul qilindi. Topshiriqni boshlash uchun /start buyrug'ini bosing!")
 
-# Render Web Service HTTP Health Check
+# Optional Web Health Check
 async def handle_health(request):
     return web.Response(text="Cyber CTF Bot is running 24/7!", status=200)
 
 async def start_web_server():
-    app = web.Application()
-    app.router.add_get("/", handle_health)
-    app.router.add_get("/health", handle_health)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get("PORT", 8080))
-    site = web.TCPSite(runner, "0.0.0.0", port)
-    await site.start()
-    print(f"🌐 Web Health Check server {port} portida ishga tushdi...")
+    try:
+        port_env = os.environ.get("PORT")
+        if port_env:
+            port = int(port_env)
+            app = web.Application()
+            app.router.add_get("/", handle_health)
+            app.router.add_get("/health", handle_health)
+            runner = web.AppRunner(app)
+            await runner.setup()
+            site = web.TCPSite(runner, "0.0.0.0", port)
+            await site.start()
+            print(f"🌐 Web Health Check server {port} portida ishga tushdi...")
+    except Exception as e:
+        print(f"⚠️ Web server ogohlantirish (e'tiborsiz qoldirilsin): {e}")
 
 async def main():
     print("🤖 1-ga-1 CTF Bot 24/7 ishga tushdi...")
     await start_web_server()
-    await dp.start_polling(bot)
+    while True:
+        try:
+            await dp.start_polling(bot, handle_signals=False)
+        except Exception as e:
+            logging.error(f"⚠️ Polling uzildi: {e}. 3 soniyada qayta ulanmoqda...")
+            await asyncio.sleep(3)
 
 if __name__ == "__main__":
     asyncio.run(main())
