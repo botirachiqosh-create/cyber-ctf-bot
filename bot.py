@@ -4,6 +4,7 @@ import time
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import CommandStart, Command
 from aiogram.types import (
@@ -279,8 +280,24 @@ async def generic_text_handler(message: types.Message):
     )
     await message.answer(resp.text)
 
+# Render Web Service HTTP Health Check
+async def handle_health(request):
+    return web.Response(text="Cyber CTF Bot is running 24/7!", status=200)
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get("/", handle_health)
+    app.router.add_get("/health", handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 8080))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Web Health Check server {port} portida ishga tushdi...")
+
 async def main():
     print("🤖 1-ga-1 CTF Bot 24/7 ishga tushdi...")
+    await start_web_server()
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
