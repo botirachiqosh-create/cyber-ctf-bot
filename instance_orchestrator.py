@@ -4,12 +4,15 @@ import time
 import os
 import subprocess
 import threading
-import asyncssh
 import pty
 import select
 import socket
-import paramiko
 from pathlib import Path
+
+try:
+    import paramiko
+except ImportError:
+    paramiko = None
 
 BASE_DIR = Path(__file__).parent.resolve()
 DB_PATH = BASE_DIR / "ctf_platform.db"
@@ -18,14 +21,19 @@ HOST_KEY_PATH = BASE_DIR / "ssh_host_key"
 
 INSTANCES_DIR.mkdir(parents=True, exist_ok=True)
 
-try:
-    if not HOST_KEY_PATH.exists():
-        k = paramiko.RSAKey.generate(2048)
-        k.write_private_key_file(str(HOST_KEY_PATH))
-    else:
-        k = paramiko.RSAKey(filename=str(HOST_KEY_PATH))
-except Exception as e:
-    k = paramiko.RSAKey.generate(2048)
+k = None
+if paramiko:
+    try:
+        if not HOST_KEY_PATH.exists():
+            k = paramiko.RSAKey.generate(2048)
+            k.write_private_key_file(str(HOST_KEY_PATH))
+        else:
+            k = paramiko.RSAKey(filename=str(HOST_KEY_PATH))
+    except Exception as e:
+        try:
+            k = paramiko.RSAKey.generate(2048)
+        except Exception:
+            k = None
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
