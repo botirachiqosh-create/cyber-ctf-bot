@@ -201,7 +201,7 @@ def spawn_challenge_instance(user_id: int, challenge_id: int, duration_minutes: 
     chal_title = chal["title"] if chal else f"Challenge #{challenge_id}"
     
     # Copy ctf CLI into instance
-    ctf_src = Path("/home/fara/.gemini/antigravity/scratch/telegram_video_bot/ctf_cli.py")
+    ctf_src = BASE_DIR / "ctf_cli.py"
     if ctf_src.exists():
         with open(ctf_src, "r") as s, open(instance_dir / "ctf", "w") as d:
             d.write(s.read())

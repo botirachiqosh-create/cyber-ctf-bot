@@ -5,7 +5,6 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# Tizim paketlari va CTF vositalarini o'rnatish
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     openssh-client \
@@ -19,15 +18,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Python kutubxonalari
 COPY requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Loyiha fayllarini ko'chirish
 COPY . /app/
-
 RUN chmod +x /app/entrypoint.sh /app/ctf_cli.py
 
-EXPOSE 2222 8080
+EXPOSE 8080 2222
 
-ENTRYPOINT ["/app/entrypoint.sh"]
+CMD ["/bin/bash", "/app/entrypoint.sh"]

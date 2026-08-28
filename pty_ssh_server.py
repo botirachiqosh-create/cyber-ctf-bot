@@ -29,7 +29,7 @@ def setup_user_sandbox(user_id: int):
         d.mkdir(parents=True, exist_ok=True)
         
     # Copy ctf CLI
-    ctf_src = Path("/home/fara/.gemini/antigravity/scratch/telegram_video_bot/ctf_cli.py")
+    ctf_src = BASE_DIR / "ctf_cli.py"
     if ctf_src.exists():
         with open(ctf_src, "r") as src, open(user_home / "ctf", "w") as dst:
             dst.write(src.read())

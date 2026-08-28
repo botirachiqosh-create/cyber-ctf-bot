@@ -24,11 +24,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 
 load_dotenv("/app/.env" if os.path.exists("/app/.env") else "/home/fara/.gemini/antigravity/scratch/telegram_video_bot/.env")
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
 if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN is not set in environment")
+    raise ValueError("TELEGRAM_BOT_TOKEN must be set in Environment Variables")
 
 gemini_client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else genai.Client()
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
