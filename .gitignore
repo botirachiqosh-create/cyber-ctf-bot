@@ -4,6 +4,9 @@ __pycache__/
 .env
 temp/
 *.session
-*.db
+*.session-journal
 ctf_instances/
 ssh_host_key*
+cloudflared
+users.db
+*.log
