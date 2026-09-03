@@ -1,357 +1,343 @@
 import asyncio
 import os
-import time
 import logging
-import threading
 from pathlib import Path
 from dotenv import load_dotenv
-from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
+from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart, Command
-from aiogram.types import (
-    ReplyKeyboardMarkup, KeyboardButton, 
-    InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardRemove
-)
+from aiogram.types import ReplyKeyboardRemove
+from aiogram.client.session.aiohttp import AiohttpSession
+from aiogram.client.default import DefaultBotProperties
 from google import genai
 from google.genai import types as genai_types
-from ctf_database import (
-    register_user, get_user_stats, get_leaderboard, 
-    verify_flag, get_db
-)
-from instance_orchestrator import spawn_challenge_instance, destroy_user_instances
-from populate_50_hard_challenges import populate_database_and_vault
-from spawn_live_ctf_services import run_unlinked_file_daemon, run_hex_stream_server, run_fifo_daemon
 
+# Log sozlamalari
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 BASE_DIR = Path(__file__).parent.resolve()
 load_dotenv(BASE_DIR / ".env")
 
-import base64
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
-FALLBACK_TOKEN = base64.b64decode(b"ODU2MTU0ODMxMzpBQUdad2szVkphaTR0d1pBbDNzUlI0NGJrSXVtM05wb3VjWQ==").decode()
-FALLBACK_GEMINI = base64.b64decode(b"QVEuQWI4Uk42SlI0dUNQbnpiMGpERWh1MTJuWE5PTEpMcENZMmEySHNCYzF4THc3YWREVmc=").decode()
+DOWNLOADS_DIR = BASE_DIR / "downloads"
+DOWNLOADS_DIR.mkdir(parents=True, exist_ok=True)
 
-TELEGRAM_BOT_TOKEN = (os.getenv("TELEGRAM_BOT_TOKEN") or FALLBACK_TOKEN).strip()
-GEMINI_API_KEY = (os.getenv("GEMINI_API_KEY") or FALLBACK_GEMINI).strip()
-
+# Gemini Client
 gemini_client = None
 if GEMINI_API_KEY:
     try:
         gemini_client = genai.Client(api_key=GEMINI_API_KEY)
+        logging.info("✅ Gemini AI mijozi muvaffaqiyatli ulandi.")
     except Exception as e:
-        print(f"⚠️ Gemini client ogohlantirish: {e}")
+        logging.error(f"⚠️ Gemini client ulanishda xato: {e}")
 
-from aiogram.client.session.aiohttp import AiohttpSession
-
-is_pythonanywhere = "pythonanywhere" in str(BASE_DIR).lower() or "pmicadzoqwt" in str(BASE_DIR).lower()
+# Proxy sozlamasi (agar kerak bo'lsa)
 proxy_url = os.environ.get("http_proxy") or os.environ.get("https_proxy")
-if is_pythonanywhere and not proxy_url:
-    proxy_url = "http://proxy.server:3128"
-
 if proxy_url:
     session = AiohttpSession(proxy=proxy_url)
-    bot = Bot(token=TELEGRAM_BOT_TOKEN, session=session)
-    print(f"🌐 PythonAnywhere Proxy ulandi: {proxy_url}")
+    bot = Bot(token=TELEGRAM_BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode=None))
 else:
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
+    bot = Bot(token=TELEGRAM_BOT_TOKEN, default=DefaultBotProperties(parse_mode=None))
 
 dp = Dispatcher()
 
-# Self-Contained Startup: Database init + Background Live CTF services
-try:
-    populate_database_and_vault()
-    print("✅ 50 ta Hard CTF bazasi muvaffaqiyatli yuklandi!")
-except Exception as e:
-    print(f"⚠️ DB yuklashda ogohlantirish: {e}")
+# Bir vaqtning o'zida serverni va tarmoqni band qilmaslik uchun cheklov
+ai_semaphore = asyncio.Semaphore(2)
 
-try:
-    threading.Thread(target=run_unlinked_file_daemon, daemon=True).start()
-    threading.Thread(target=run_hex_stream_server, daemon=True).start()
-    run_fifo_daemon()
-    print("✅ Jonli CTF target xizmatlari (sockets, named pipes) ishga tushdi!")
-except Exception as e:
-    print(f"⚠️ CTF target xizmatlari ogohlantirish: {e}")
+SYSTEM_INSTRUCTION = """
+Sen foydalanuvchining shaxsiy universal bilimdoni va repetitorisan.
+Senga foydalanuvchi turli materiallarni yuboradi:
+- Qo'lyozma konspektlar, darslik sahifalari, testlar, qoidalar va misollar;
+- Ona tili va adabiyot, matematika, fizika, tarix yoki boshqa fanlardan mavzular;
+- PDF kitoblar va matnli savollar.
 
-# Main Keyboard
-main_keyboard = ReplyKeyboardMarkup(
-    keyboard=[
-        [KeyboardButton(text="🎯 50 ta Hard CTF"), KeyboardButton(text="🚀 Yangi Lab IP")],
-        [KeyboardButton(text="⏹️ Labni O'chirish"), KeyboardButton(text="📊 Reyting")],
-        [KeyboardButton(text="👤 Profilim")]
-    ],
-    resize_keyboard=True
-)
+SENING ASOSIY VAZIFANG:
+1. Yuborilgan rasm, matn yoki hujjatni juda diqqat bilan o'qib chiqish.
+2. Rasmdagi qo'lyozmani to'liq o'qib, mavzuni tartibli, chiroyli va tushunarli qilib konspekt/tahlil qilib berish.
+3. Agar bu qoidalar bo'lsa (masalan, Tarixizmlar, Arxaizmlar, Neologizmlar, Yordamchi so'zlar va h.k.):
+   - Har bir tushunchaning ma'nosi va misollarini aniq ko'rsat;
+   - Imtihonda yoki testda qanday savollar tushishi mumkinligini ayt;
+   - Yodlash uchun qulay qisqa xulosa ber.
+4. Javoblarni o'zbek tilida (lotin alifbosida), juda samimiy va chiroyli tartibda taqdim et.
+"""
 
-def get_challenge_by_id(chal_id: int):
-    with get_db() as conn:
-        return conn.execute("SELECT * FROM challenges WHERE id = ?", (chal_id,)).fetchone()
+def sync_gemini_call(contents):
+    """Sinxron Gemini chaqiruvi (thread ichida ishlaydi)"""
+    models_to_try = ["gemini-3.5-flash-lite", "gemini-3.5-flash", "gemini-3.6-flash"]
+    last_err = None
+    for model_name in models_to_try:
+        try:
+            res = gemini_client.models.generate_content(
+                model=model_name,
+                contents=contents
+            )
+            if res and res.text:
+                return res.text
+        except Exception as e:
+            last_err = e
+            logging.warning(f"Model {model_name} ogohlantirish: {e}")
+    raise Exception(f"Barcha modellar xato berdi: {last_err}")
 
-def get_total_challenges_count():
-    with get_db() as conn:
-        return conn.execute("SELECT COUNT(*) as count FROM challenges").fetchone()["count"]
+async def call_gemini(contents):
+    """Event loopni to'xtatib qo'ymaslik uchun alohida thread'da chaqirish"""
+    async with ai_semaphore:
+        return await asyncio.to_thread(sync_gemini_call, contents)
+
+async def safe_send_text(message: types.Message, text: str):
+    """Telegram limiti (4096 belgi) bo'yicha xavfsiz bo'lib jo'natish"""
+    if not text:
+        text = "Tahlil natijasi bo'sh."
+    
+    max_len = 3900
+    if len(text) <= max_len:
+        try:
+            await message.answer(text)
+        except Exception as e:
+            logging.error(f"Xabar jo'natishda xato: {e}")
+        return
+
+    chunks = []
+    lines = text.split("\n")
+    cur = ""
+    for line in lines:
+        if len(cur) + len(line) + 1 > max_len:
+            chunks.append(cur)
+            cur = line + "\n"
+        else:
+            cur += line + "\n"
+    if cur.strip():
+        chunks.append(cur)
+
+    for ch in chunks:
+        try:
+            await message.answer(ch)
+            await asyncio.sleep(0.3)
+        except Exception as e:
+            logging.error(f"Chunk jo'natishda xato: {e}")
 
 @dp.message(CommandStart())
 async def start_handler(message: types.Message):
-    user = message.from_user
-    u_name = f"@{user.username}" if user.username else f"user_{user.id}"
-    register_user(user.id, u_name, user.first_name)
-    
-    text = (
-        f"Salom, <b>{u_name}</b>! ⚡\n\n"
-        f"<b>50 ta Hard CTF & 1-ga-1 SSH Lab Platformasi</b>\n\n"
-        f"• Har bir topshiriq uchun alohida unikal IP va port beriladi.\n"
-        f"• Maxsus 1-ga-1 izolyatsiyalangan Linux muhiti yaratiladi.\n"
-        f"• Ishlatilgach, avtomatik o'chadi.\n\n"
-        f"Boshlash uchun quyidagi tugmalardan birini bosing:"
+    """Start: eski tugmalarni yo'qotadi va toza rejimga o'tadi"""
+    welcome_text = (
+        "👋 Assalomu alaykum!\n\n"
+        "Bot to'liq tozalandi. Barcha eski tugmalar va xizmatlar olib tashlandi. 🧹✨\n\n"
+        "📥 Menga istalgan narsani yuboring:\n"
+        "📸 Daftardagi konspekt yoki darslik rasmini (istalgancha rasm yuborishingiz mumkin);\n"
+        "📄 PDF kitob yoki hujjatlarni;\n"
+        "✍️ Matnli savol yoki misollarni.\n\n"
+        "Har birini batafsil o'qib, chiroyli tushuntirib beraman! 👇"
     )
-    await message.answer(text, reply_markup=main_keyboard, parse_mode="HTML")
+    try:
+        await message.answer(welcome_text, reply_markup=ReplyKeyboardRemove())
+    except Exception as e:
+        logging.error(f"Start xato: {e}")
 
-@dp.message(F.text.contains("50 ta Hard CTF") | F.text.contains("CTF"))
-@dp.message(Command("ctf"))
-async def ctf_list_handler(message: types.Message):
-    user_id = message.from_user.id
-    stats = get_user_stats(user_id)
-    cur_id = stats["current_challenge_id"] if stats else 1
-    
-    chal = get_challenge_by_id(cur_id)
-    if not chal:
-        await message.answer("🎉 Barcha 50 ta Hard topshiriqni yakunladingiz!")
-        return
-        
-    text = (
-        f"🎯 <b>TOPSHIRIQ #{chal['id']} / 50:</b> {chal['title']}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📂 <b>Modul:</b> {chal['module']}\n"
-        f"⚡ <b>Qiyinlik:</b> 🔴 Hard ({chal['points']} ball)\n\n"
-        f"📝 <b>Vazifa:</b>\n{chal['description']}\n\n"
-        f"🚩 <b>Flag formati:</b> <code>HD{{...}}</code>"
+@dp.message(Command("help"))
+async def help_handler(message: types.Message):
+    await safe_send_text(
+        message,
+        "ℹ️ Botdan foydalanish:\n"
+        "Daftaringizdagi konspekt rasmini, darslik sahifasini yoki savolingizni yuboring — bot uni o'qib, to'liq tahlilini yozib beradi."
     )
-    
-    inline_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🚀 Labni Ochish (IP)", callback_data=f"spawn_{chal['id']}"),
-            InlineKeyboardButton(text="💡 Kichik Hint", callback_data=f"hint_{chal['id']}")
-        ],
-        [
-            InlineKeyboardButton(text="⏭️ Keyingi topshiriq", callback_data=f"next_{chal['id']}")
+
+@dp.message(F.photo)
+async def photo_handler(message: types.Message):
+    """Rasm va konspektlarni o'qish"""
+    local_path = None
+    status_msg = None
+    try:
+        status_msg = await message.answer("🔍 Rasm qabul qilindi, o'qilmoqda...")
+    except Exception:
+        pass
+
+    try:
+        photo = message.photo[-1]
+        file_info = await bot.get_file(photo.file_id)
+        local_path = DOWNLOADS_DIR / f"photo_{message.message_id}_{photo.file_id[:6]}.jpg"
+        await bot.download_file(file_info.file_path, local_path)
+
+        image_bytes = local_path.read_bytes()
+        user_prompt = message.caption or (
+            "Ushbu rasmdagi qo'lyozma konspekt yoki matnni to'liq o'qib ol. "
+            "Unda nima yozilganini aniq keltir va mavzuni sodda, tartibli, "
+            "misollar va testda tushishi mumkin bo'lgan muhim qoidalari bilan to'liq tushuntirib ber."
+        )
+
+        prompt_parts = [
+            genai_types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+            f"{SYSTEM_INSTRUCTION}\n\nFoydalanuvchi topshirig'i:\n{user_prompt}"
         ]
-    ])
-    await message.answer(text, reply_markup=inline_kb, parse_mode="HTML")
 
-@dp.message(F.text == "🚀 Yangi Lab IP")
-@dp.message(Command("spawn"))
-async def spawn_instance_cmd(message: types.Message):
-    user_id = message.from_user.id
-    stats = get_user_stats(user_id)
-    cur_id = stats["current_challenge_id"] if stats else 1
-    
-    inst = spawn_challenge_instance(user_id, cur_id, 60)
-    
-    text = (
-        f"⚡ <b>SHAXSIY LAB INSTANSIYANGIZ:</b>\n\n"
-        f"🎯 <b>Topshiriq:</b> #{cur_id} — {inst['challenge_title']}\n"
-        f"🌐 <b>IP:</b> <code>127.0.0.1</code> (Virtual: <code>{inst['ip_address']}</code>)\n"
-        f"🔌 <b>Port:</b> <code>{inst['ssh_port']}</code>\n"
-        f"👤 <b>Login:</b> <code>{inst['username']}</code>\n"
-        f"🔒 <b>Parol:</b> <code>{inst['password']}</code>\n\n"
-        f"💻 <b>Ulanish buyrug'i:</b>\n"
-        f"<code>ssh {inst['username']}@127.0.0.1 -p {inst['ssh_port']}</code>\n\n"
-        f"⏱️ <i>60 daqiqadan so'ng avtomatik o'chadi.</i>"
-    )
-    inline_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏹️ Labni O'chirish", callback_data="destroy_inst")]
-    ])
-    await message.answer(text, reply_markup=inline_kb, parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("spawn_"))
-async def spawn_callback(callback: types.CallbackQuery):
-    chal_id = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-    
-    inst = spawn_challenge_instance(user_id, chal_id, 60)
-    text = (
-        f"⚡ <b>SHAXSIY LAB INSTANSIYANGIZ:</b>\n\n"
-        f"🎯 <b>Topshiriq:</b> #{chal_id} — {inst['challenge_title']}\n"
-        f"🌐 <b>IP:</b> <code>127.0.0.1</code> (Virtual: <code>{inst['ip_address']}</code>)\n"
-        f"🔌 <b>Port:</b> <code>{inst['ssh_port']}</code>\n"
-        f"👤 <b>Login:</b> <code>{inst['username']}</code>\n"
-        f"🔒 <b>Parol:</b> <code>{inst['password']}</code>\n\n"
-        f"💻 <b>Ulanish buyrug'i:</b>\n"
-        f"<code>ssh {inst['username']}@127.0.0.1 -p {inst['ssh_port']}</code>"
-    )
-    inline_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏹️ Labni O'chirish", callback_data="destroy_inst")]
-    ])
-    await callback.message.answer(text, reply_markup=inline_kb, parse_mode="HTML")
-    await callback.answer()
-
-@dp.message(F.text == "⏹️ Labni O'chirish")
-@dp.callback_query(F.data == "destroy_inst")
-async def destroy_cmd(event: types.Message | types.CallbackQuery):
-    user_id = event.from_user.id
-    destroy_user_instances(user_id)
-    text = "🗑️ <b>Lab instansiyasi va IP butunlay o'chirildi!</b>"
-    if isinstance(event, types.CallbackQuery):
-        await event.message.answer(text, parse_mode="HTML")
-        await event.answer()
-    else:
-        await event.answer(text, parse_mode="HTML")
-
-@dp.callback_query(F.data.startswith("hint_"))
-async def hint_callback(callback: types.CallbackQuery):
-    chal_id = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-    
-    with get_db() as conn:
-        conn.execute("INSERT OR IGNORE INTO hints_used (user_id, challenge_id) VALUES (?, ?)", (user_id, chal_id))
-        conn.commit()
-        chal = conn.execute("SELECT hint FROM challenges WHERE id = ?", (chal_id,)).fetchone()
+        reply_text = await call_gemini(prompt_parts)
         
-    hint_text = chal["hint"] if chal else "Maslahat mavjud emas."
-    await callback.message.answer(f"💡 <b>Topshiriq #{chal_id} Hint:</b>\n\n<code>{hint_text}</code>", parse_mode="HTML")
-    await callback.answer()
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
 
-@dp.callback_query(F.data.startswith("next_"))
-async def next_callback(callback: types.CallbackQuery):
-    current_id = int(callback.data.split("_")[1])
-    user_id = callback.from_user.id
-    total = get_total_challenges_count()
-    
-    next_id = current_id + 1 if current_id < total else 1
-    with get_db() as conn:
-        conn.execute("UPDATE users SET current_challenge_id = ? WHERE user_id = ?", (next_id, user_id))
-        conn.commit()
-        
-    chal = get_challenge_by_id(next_id)
-    text = (
-        f"🎯 <b>TOPSHIRIQ #{chal['id']} / 50:</b> {chal['title']}\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📂 <b>Modul:</b> {chal['module']}\n"
-        f"⚡ <b>Qiyinlik:</b> 🔴 Hard ({chal['points']} ball)\n\n"
-        f"📝 <b>Vazifa:</b>\n{chal['description']}\n\n"
-        f"🚩 <b>Flag:</b> <code>HD{{...}}</code>"
-    )
-    
-    inline_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="🚀 Labni Ochish (IP)", callback_data=f"spawn_{chal['id']}"),
-            InlineKeyboardButton(text="💡 Kichik Hint", callback_data=f"hint_{chal['id']}")
-        ],
-        [
-            InlineKeyboardButton(text="⏭️ Keyingi topshiriq", callback_data=f"next_{chal['id']}")
+        await safe_send_text(message, reply_text)
+
+    except Exception as e:
+        logging.error(f"Rasm tahlilida xato: {e}")
+        if status_msg:
+            try:
+                await status_msg.edit_text(f"⚠️ Rasm tahlilida xatolik: {e}")
+            except Exception:
+                pass
+    finally:
+        if local_path and local_path.exists():
+            try:
+                local_path.unlink()
+            except Exception:
+                pass
+
+@dp.message(F.document)
+async def document_handler(message: types.Message):
+    """PDF va hujjatlarni tahlil qilish"""
+    doc = message.document
+    filename = doc.file_name or f"file_{doc.file_id[:8]}"
+    local_path = None
+    status_msg = None
+
+    try:
+        status_msg = await message.answer(f"📥 {filename} qabul qilindi. O'qilmoqda...")
+    except Exception:
+        pass
+
+    try:
+        file_info = await bot.get_file(doc.file_id)
+        local_path = DOWNLOADS_DIR / filename
+        await bot.download_file(file_info.file_path, local_path)
+
+        user_prompt = message.caption or (
+            "Ushbu hujjatni to'liq o'qib chiq va barcha asosiy mavzular, qoidalar "
+            "va misollarni qadamma-qadam eng sodda tilda tahlil qilib ber."
+        )
+
+        # Upload via Gemini File API
+        def upload_and_process():
+            uploaded = gemini_client.files.upload(file=str(local_path))
+            return sync_gemini_call([uploaded, f"{SYSTEM_INSTRUCTION}\n\nFoydalanuvchi talabi:\n{user_prompt}"])
+
+        async with ai_semaphore:
+            reply_text = await asyncio.to_thread(upload_and_process)
+
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
+        await safe_send_text(message, reply_text)
+
+    except Exception as e:
+        logging.error(f"Hujjat tahlilida xato: {e}")
+        if status_msg:
+            try:
+                await status_msg.edit_text(f"⚠️ Hujjat tahlilida xatolik: {e}")
+            except Exception:
+                pass
+    finally:
+        if local_path and local_path.exists():
+            try:
+                local_path.unlink()
+            except Exception:
+                pass
+
+@dp.message(F.voice | F.audio)
+async def audio_handler(message: types.Message):
+    """Ovozli xabarlar"""
+    local_path = None
+    status_msg = None
+    try:
+        status_msg = await message.answer("🎙 Ovoz tinglanmoqda...")
+    except Exception:
+        pass
+
+    try:
+        audio_obj = message.voice or message.audio
+        file_info = await bot.get_file(audio_obj.file_id)
+        local_path = DOWNLOADS_DIR / f"audio_{message.message_id}.ogg"
+        await bot.download_file(file_info.file_path, local_path)
+
+        audio_bytes = local_path.read_bytes()
+        prompt_parts = [
+            genai_types.Part.from_bytes(data=audio_bytes, mime_type="audio/ogg"),
+            f"{SYSTEM_INSTRUCTION}\n\nOvozda aytilgan savolni tushunib, unga batafsil va aniq javob ber."
         ]
-    ])
-    await callback.message.edit_text(text, reply_markup=inline_kb, parse_mode="HTML")
-    await callback.answer()
 
-@dp.message(F.text == "📊 Reyting")
-@dp.message(Command("leaderboard"))
-async def leaderboard_handler(message: types.Message):
-    leaders = get_leaderboard(10)
-    if not leaders:
-        await message.answer("🏆 Hozircha hech kim flag topshirmagan.")
-        return
-        
-    text = "🏆 <b>TOP-10 CTF REYTINGI:</b>\n━━━━━━━━━━━━━━━━━━━━\n"
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-    
-    for i, row in enumerate(leaders):
-        medal = medals[i] if i < len(medals) else f"{i+1}."
-        u_handle = row["username"] if row["username"].startswith("@") else f"@{row['username']}"
-        text += f"{medal} <b>{u_handle}</b> — ⭐ {row['score']} ball ({row['solved_count']} ta flag)\n"
-        
-    await message.answer(text, parse_mode="HTML")
+        reply_text = await call_gemini(prompt_parts)
 
-@dp.message(F.text == "👤 Profilim")
-@dp.message(Command("stats"))
-async def stats_handler(message: types.Message):
-    user_id = message.from_user.id
-    stats = get_user_stats(user_id)
-    if not stats:
-        await message.answer("Siz hali topshiriq bajarmadingiz. /start bosing.")
-        return
-        
-    u_handle = stats["username"] if stats["username"].startswith("@") else f"@{stats['username']}"
-    text = (
-        f"👤 <b>PROFIL:</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"👤 <b>User:</b> {u_handle}\n"
-        f"⭐ <b>Ball:</b> {stats['score']} ball\n"
-        f"🚩 <b>Yechilgan:</b> {stats['solved_count']} / 50 ta\n"
-        f"🎯 <b>Joriy topshiriq:</b> #{stats['current_challenge_id']}\n"
-    )
-    await message.answer(text, parse_mode="HTML")
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
 
-# Flag submission detector
-@dp.message(F.text.startswith("HD{") & F.text.endswith("}"))
-async def flag_submission_handler(message: types.Message):
-    user_id = message.from_user.id
-    flag = message.text.strip()
-    
-    res = verify_flag(user_id, flag)
-    if res["status"] == "correct":
-        destroy_user_instances(user_id)
-        stats = get_user_stats(user_id)
-        cur_id = stats["current_challenge_id"]
-        next_id = cur_id + 1
-        with get_db() as conn:
-            conn.execute("UPDATE users SET current_challenge_id = ? WHERE user_id = ?", (next_id, user_id))
-            conn.commit()
-            
-        next_chal = get_challenge_by_id(next_id)
-        next_msg = f"\n\n👉 <b>Keyingi topshiriq:</b> #{next_chal['id']} — {next_chal['title']}" if next_chal else "\n\n🏆 50 TA TOPSHIRIQ YAKUNLANDI!"
-        await message.answer(f"🎉 <b>TO'G'RI! +{res['points']} ball!</b>\n🗑️ <i>Lab instansiyasi o'chirildi.</i>" + next_msg, parse_mode="HTML")
-    else:
-        await message.answer(res["msg"])
+        await safe_send_text(message, reply_text)
 
-# Generic text / questions with Gemini 3.5 Flash-lite
+    except Exception as e:
+        logging.error(f"Ovoz xatosi: {e}")
+        if status_msg:
+            try:
+                await status_msg.edit_text(f"⚠️ Ovoz tahlilida xatolik: {e}")
+            except Exception:
+                pass
+    finally:
+        if local_path and local_path.exists():
+            try:
+                local_path.unlink()
+            except Exception:
+                pass
+
 @dp.message(F.text)
-async def generic_text_handler(message: types.Message):
+async def text_handler(message: types.Message):
+    """Matnli xabarlar"""
     if message.text.startswith("/"):
         return
-    await bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    try:
-        if gemini_client:
-            prompt = f"Talabaning savoli: {message.text}\nQisqa, aniq va lo'nda javob bering."
-            resp = gemini_client.models.generate_content(
-                model="gemini-3.5-flash-lite",
-                contents=prompt
-            )
-            await message.answer(resp.text)
-        else:
-            await message.answer("🤖 AI Mentor faol. Topshiriqni ko'rish uchun 🎯 50 ta Hard CTF tugmasini bosing!")
-    except Exception as e:
-        await message.answer("Savolingiz qabul qilindi. Topshiriqni boshlash uchun /start buyrug'ini bosing!")
 
-# Universal Web Health Check for Railway/Render
-async def handle_health(request):
-    return web.Response(text="Cyber CTF Bot is running 24/7!", status=200)
-
-async def start_web_server():
+    status_msg = None
     try:
-        port = int(os.environ.get("PORT", "8080"))
-        app = web.Application()
-        app.router.add_get("/", handle_health)
-        app.router.add_get("/health", handle_health)
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "0.0.0.0", port)
-        await site.start()
-        print(f"🌐 Universal Web Health Check server {port} portida ishga tushdi...")
+        status_msg = await message.answer("🧠 Javob tayyorlanmoqda...")
+    except Exception:
+        pass
+
+    try:
+        prompt = f"{SYSTEM_INSTRUCTION}\n\nFoydalanuvchi savoli:\n{message.text}"
+        reply_text = await call_gemini(prompt)
+
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
+        await safe_send_text(message, reply_text)
+
     except Exception as e:
-        print(f"⚠️ Web health check ogohlantirish: {e}")
+        logging.error(f"Matn xatosi: {e}")
+        if status_msg:
+            try:
+                await status_msg.edit_text(f"⚠️ Xatolik: {e}")
+            except Exception:
+                pass
 
 async def main():
-    print("🤖 1-ga-1 CTF Bot 24/7 ishga tushdi...")
-    await start_web_server()
+    logging.info("🚀 Bardoshli, toza Universal AI Bot ishga tushirilmoqda...")
     while True:
         try:
+            await bot.delete_webhook(drop_pending_updates=False)
+            logging.info("⚡ Polling boshlandi...")
             await dp.start_polling(bot, handle_signals=False)
+        except (KeyboardInterrupt, SystemExit):
+            logging.info("To'xtatildi.")
+            break
         except Exception as e:
-            logging.error(f"⚠️ Polling uzildi: {e}. 2 soniyada qayta ulanmoqda...")
-            await asyncio.sleep(2)
+            logging.error(f"Bot polling xatosi: {e}. 3 soniyadan keyin qayta ulanadi...")
+            await asyncio.sleep(3)
 
 if __name__ == "__main__":
     asyncio.run(main())
